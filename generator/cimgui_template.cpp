@@ -1,8 +1,9 @@
 
 #include "./imgui/imgui.h"
+#include "./imgui/imgui_internal.h"
 #include "cimgui.h"
 
-#include "./imgui/imgui_internal.h"
+
 
 #include "auto_funcs.cpp"
 
@@ -42,6 +43,11 @@ CIMGUI_API void igColorConvertHSVtoRGB(float h,float s,float v,float *out_r,floa
 CIMGUI_API ImVector_ImWchar* ImVector_ImWchar_create()
 {
 	return IM_NEW(ImVector<ImWchar>) ();
+}
+
+CIMGUI_API void ImVector_ImWchar_destroy(ImVector_ImWchar* self)
+{
+    IM_DELETE(self);
 }
 
 CIMGUI_API void ImVector_ImWchar_Init(ImVector_ImWchar* p)
