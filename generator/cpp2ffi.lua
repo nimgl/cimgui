@@ -820,6 +820,8 @@ function M.Parser()
 				end
 				--clean mutable
 				it2 = it2:gsub("mutable","")
+				--clean namespaces
+				it2 = it2:gsub("%w+::","")
 				--skip static variables
 				if not (it.re_name == "vardef_re" and it2:match"static") then
 					table.insert(outtab,it2)
@@ -847,6 +849,20 @@ function M.Parser()
 					local stname = it.item:match("struct%s*(%S+)%s*;")
 					table.insert(typedefs_table,"typedef struct "..stname.." "..stname..";\n")
 					self.typedefs_dict[stname]="struct "..stname
+				end
+			end
+		end
+		--get structs in namespace
+		for i,it in ipairs(itemsarr) do
+			if it.re_name == "namespace_re" then
+				local nsp = it.item:match("%b{}"):sub(2,-2)
+				local namespace = it.item:match("namespace%s+(%S+)")
+				local nspparr,itemsnsp = parseItems(nsp)
+				for insp,itnsp in ipairs(nspparr) do
+					if itnsp.re_name == "struct_re" then --or itnsp.re_name == "functionD_re" then
+						--print("in mamespace",itnsp.item,namespace)
+						table.insert(outtab,itnsp.item)
+					end
 				end
 			end
 		end
@@ -1274,7 +1290,7 @@ M.serializeTableF = function(t)
 	return M.serializeTable("defs",t).."\nreturn defs"
 end
 --iterates lines from a gcc/clang -E in a specific location
-local function location(file,locpathT,defines)
+local function location(file,locpathT,defines,COMPILER)
 	local define_re = "^#define%s+([^%s]+)%s+([^%s]+)$"
 	local number_re = "^-?[0-9]+u*$"
 	local hex_re = "0x[0-9a-fA-F]+u*$"
@@ -1284,6 +1300,7 @@ local function location(file,locpathT,defines)
     else --gcc, clang
         location_re = '^# (%d+) "([^"]*)"'
     end
+
     local path_reT = {}
     for i,locpath in ipairs(locpathT) do
         table.insert(path_reT,'^.*[\\/]('..locpath..')%.h$')
@@ -1309,6 +1326,7 @@ local function location(file,locpathT,defines)
             if #line==0 then --nothing on emptyline
             elseif not line:match("%S") then --nothing if only spaces
             elseif line:sub(1,1) == "#" then
+			--elseif line:match"^%s*#" then
                 -- Is this a location pragma?
                 local loc_num_t,location_match = line:match(location_re)
                 if location_match then
