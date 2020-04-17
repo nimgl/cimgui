@@ -6,6 +6,7 @@ assert(_VERSION=='Lua 5.1',"Must use LuaJIT")
 assert(bit,"Must use LuaJIT")
 local script_args = {...}
 local COMPILER = script_args[1]
+local INTERNAL_GENERATION = script_args[2]=="true" 
 local CPRE,CTEST
 if COMPILER == "gcc" or COMPILER == "clang" then
     CPRE = COMPILER..[[ -E -DIMGUI_DISABLE_OBSOLETE_FUNCTIONS -DIMGUI_API="" -DIMGUI_IMPL_API="" ]]
@@ -15,31 +16,33 @@ elseif COMPILER == "cl" then
     CTEST = COMPILER
 else
     print("Working without compiler ")
+	error("cant work with "..COMPILER.." compiler")
 end
 --test compiler present
 local HAVE_COMPILER = false
-if CTEST then
-    local pipe,err = io.popen(CTEST,"r")
-    if pipe then
-        local str = pipe:read"*a"
-        print(str)
-        pipe:close()
-        if str=="" then
-            HAVE_COMPILER = false
-        else
-            HAVE_COMPILER = true
-        end
-    else
+
+local pipe,err = io.popen(CTEST,"r")
+if pipe then
+    local str = pipe:read"*a"
+    print(str)
+    pipe:close()
+    if str=="" then
         HAVE_COMPILER = false
-        print(err)
+    else
+        HAVE_COMPILER = true
     end
-    assert(HAVE_COMPILER,"gcc, clang or cl needed to run script")
-end --CTEST
+else
+    HAVE_COMPILER = false
+    print(err)
+end
+assert(HAVE_COMPILER,"gcc, clang or cl needed to run script")
+
 
 print("HAVE_COMPILER",HAVE_COMPILER)
+print("INTERNAL_GENERATION",INTERNAL_GENERATION)
 --get implementations
 local implementations = {}
-for i=2,#script_args do table.insert(implementations,script_args[i]) end
+for i=3,#script_args do table.insert(implementations,script_args[i]) end
 
 --------------------------------------------------------------------------
 --this table has the functions to be skipped in generation
@@ -56,39 +59,12 @@ local cimgui_manuals = {
 --desired name
 ---------------------------------------------------------------------------
 local cimgui_overloads = {
-    igPushID = {
+    --igPushID = {
         --["(const char*)"] =           "igPushIDStr",
-        ["(const char*,const char*)"] = "igPushIDRange",
+        --["(const char*,const char*)"] = "igPushIDRange",
         --["(const void*)"] =           "igPushIDPtr",
         --["(int)"] =                   "igPushIDInt"
-    },
-    igGetID = {
-        ["(const char*,const char*)"] = "igGetIDRange",
-    },
-    ImDrawList_AddText = {
-        ["(const ImVec2,ImU32,const char*,const char*)"] = "ImDrawList_AddText",
-    },
-    igGetColorU32 = {
-        ["(ImGuiCol,float)"] = "igGetColorU32",
-    },
-    igCollapsingHeader = {
-        ["(const char*,ImGuiTreeNodeFlags)"] =  "igCollapsingHeader",
-    },
-    igCombo = {
-        ["(const char*,int*,const char* const[],int,int)"] = "igCombo",
-    },
-    igPlotLines = {
-        ["(const char*,const float*,int,int,const char*,float,float,ImVec2,int)"] = "igPlotLines",
-    },
-    igBeginChild = {
-        ["(const char*,const ImVec2,bool,ImGuiWindowFlags)"] = "igBeginChild",
-    },
-    igSelectable = {
-        ["(const char*,bool,ImGuiSelectableFlags,const ImVec2)"] = "igSelectable"
-    },
-    igPushStyleColor = {
-        ["(ImGuiCol,const ImVec4)"] = "igPushStyleColor"
-    }
+    --},
 }
 
 --------------------------header definitions
@@ -99,95 +75,6 @@ local cimgui_header =
 local gdefines = {} --for FLT_MAX and others
 --------------------------------------------------------------------------
 --helper functions
-
-
----------------------------minimal preprocessor without compiler for ImGui.h
-local function filelines(file,locats)
-    local split_comment = require"cpp2ffi".split_comment
-    local iflevels = {}
-   --generated known prepros
-local prepro = {
-["#if"]={
-    [   "defined(__clang__) || defined(__GNUC__)"       ]=false,
-    [   "defined(__clang__)"    ]=false,
-    [   "defined(_MSC_VER) && !defined(__clang__)"      ]=false,
-    [   "!defined(IMGUI_DISABLE_INCLUDE_IMCONFIG_H) || defined(IMGUI_INCLUDE_IMCONFIG_H)"       ]=false,
-    [   "!defined(IMGUI_IMPL_OPENGL_LOADER_GL3W)     \\"        ]=false,
-},
-["#elif"]={
-    [   "defined(__GNUC__) && __GNUC__ >= 8"    ]=false,
-    [   "(defined(__clang__) || defined(__GNUC__)) && (__cplusplus < 201100)"   ]=false,
-},
-["#ifdef"]={
-    [   "IM_VEC4_CLASS_EXTRA"   ]=false,
-    [   "IMGUI_USER_CONFIG"     ]=false,
-    [   "IMGUI_INCLUDE_IMGUI_USER_H"    ]=false,
-    [   "IMGUI_USE_BGRA_PACKED_COLOR"   ]=false,
-    [   "IM_VEC2_CLASS_EXTRA"   ]=false,
-},
-["#ifndef"]={
-    [   "IMGUI_API"     ]=false,
-    [   "IMGUI_IMPL_API"        ]=false,
-    [   "IMGUI_OVERRIDE_DRAWVERT_STRUCT_LAYOUT" ]=true,
-    [   "IM_ASSERT"     ]=false,
-    [   "ImTextureID"   ]=true,
-    [   "ImDrawIdx"     ]=true,
-    [   "IMGUI_DISABLE_OBSOLETE_FUNCTIONS"      ]=false,
-},
-}
-
-    local function prepro_boolif(pre,cond)
-        local conds = prepro[pre]
-        assert(conds,pre.." has no conds-----------------------------")
-        local res = conds[cond]
-        --assert(type(res)~="nil",cond.." not found")
-        if type(res)=="nil" then
-            print(pre,cond,"not found in precompiler database, returning false.")
-            res = false
-        end
-        return res
-    end
-    local function location_it()
-        repeat
-            local line = file:read"*l"
-
-            if not line then return nil end
-            line,_ = split_comment(line)
-            --if line:sub(1,1) == "#" then
-            if line:match("^%s*#") then
-                
-                local pre,cond = line:match("^%s*(#%S*)%s+(.*)%s*$")
-                if line:match("#if") then 
-                    iflevels[#iflevels +1 ] = prepro_boolif(pre,cond)
-                elseif line:match("#endif") then
-                    iflevels[#iflevels] = nil
-                elseif line:match("#elif") then
-                    if not iflevels[#iflevels] then
-                        iflevels[#iflevels] = prepro_boolif(pre,cond)
-                    else --was true
-                        iflevels[#iflevels] = false
-                    end
-                elseif line:match("#else") then
-                    iflevels[#iflevels] = not iflevels[#iflevels]
-                else
-                    if not (pre:match("#define") or pre:match"#include" or pre:match"#pragma") then
-                        print("not expected preprocessor directive ",pre)
-                    end
-                end
-                -- skip
-            elseif #iflevels == 0 or iflevels[#iflevels] then
-                -- drop IMGUI_APIX
-                line = line:gsub("IMGUI_IMPL_API","")
-                -- drop IMGUI_API
-                line = line:gsub("IMGUI_API","")
-                return line,locats[1]
-            end
-        until false
-    end
-    return location_it
-end
-
-
 --------------------------------functions for C generation
 --load parser module
 local cpp2ffi = require"cpp2ffi"
@@ -302,10 +189,6 @@ local function ImGui_f_implementation(outtab,def)
     elseif def.nonUDT then
         if def.nonUDT == 1 then
             table.insert(outtab,"    *pOut = "..namespace..def.funcname..def.call_args..";\n")
-        else --nonUDT==2
-            table.insert(outtab,"    "..def.retorig.." ret = "..namespace..def.funcname..def.call_args..";\n")
-            table.insert(outtab,"    "..def.ret.." ret2 = "..def.retorig.."ToSimple(ret);\n")
-            table.insert(outtab,"    return ret2;\n")
         end
     else --standard ImGui
         table.insert(outtab,"    return "..ptret..namespace..def.funcname..def.call_args..";\n")
@@ -336,10 +219,6 @@ local function struct_f_implementation(outtab,def)
     elseif def.nonUDT then
         if def.nonUDT == 1 then
             table.insert(outtab,"    *pOut = self->"..def.funcname..def.call_args..";\n")
-        else --nonUDT==2
-            table.insert(outtab,"    "..def.retorig.." ret = self->"..def.funcname..def.call_args..";\n")
-            table.insert(outtab,"    "..def.ret.." ret2 = "..def.retorig.."ToSimple(ret);\n")
-            table.insert(outtab,"    return ret2;\n")
         end
     else --standard struct
         table.insert(outtab,"    return "..ptret.."self->"..def.funcname..def.call_args..";\n")
@@ -442,7 +321,7 @@ end
 
 
 ----------custom ImVector templates
-local function generate_templates(code,templates)
+local function generate_templates(code,codeimpool,templates)
     table.insert(code,"\n"..[[typedef struct ImVector{int Size;int Capacity;void* Data;} ImVector;]].."\n")
     for ttype,v in pairs(templates) do
         --local te = k:gsub("%s","_")
@@ -454,8 +333,8 @@ local function generate_templates(code,templates)
 		elseif ttype == "ImPool" then
 			--declare ImGuiStorage
 			for te,newte in pairs(v) do
-				table.insert(code,"typedef struct ImVector_"..newte.." {int Size;int Capacity;"..te.."* Data;} ImVector_"..newte..";\n")
-				table.insert(code,"typedef struct ImPool_"..newte.." {ImVector_"..te.." Buf;ImGuiStorage Map;ImPoolIdx FreeIdx;} ImPool_"..newte..";\n")
+				table.insert(codeimpool,"typedef struct ImVector_"..newte.." {int Size;int Capacity;"..te.."* Data;} ImVector_"..newte..";\n")
+				table.insert(codeimpool,"typedef struct ImPool_"..newte.." {ImVector_"..te.." Buf;ImGuiStorage Map;ImPoolIdx FreeIdx;} ImPool_"..newte..";\n")
 			end
 		elseif ttype == "ImChunkStream" then
 			for te,newte in pairs(v) do
@@ -497,9 +376,14 @@ local function cimgui_generation(parser)
 	cpp2ffi.prtable(parser.typenames)
 	
 	local outtab = {}
-    generate_templates(outtab,parser.templates)
+	local outtabpool = {}
+    generate_templates(outtab, outtabpool, parser.templates)
+	
+	--move outtabpool after ImGuiStorage definition
+	local outpost1, outpost2 = outpost:match("^(.+struct ImGuiStorage%s*\n%b{};\n)(.+)$")
+	outpost = outpost1..table.concat(outtabpool)..outpost2
 
-	local cstructsstr = outpre..table.concat(outtab,"")..outpost..(extra or "")
+	local cstructsstr = outpre..table.concat(outtab,"")..outpost --..(extra or "")
 
     hstrfile = hstrfile:gsub([[#include "imgui_structs%.h"]],cstructsstr)
     local cfuncsstr = func_header_generate(parser)
@@ -531,11 +415,14 @@ while true do
 end
 pipe:close()
 cimgui_header = cimgui_header:gsub("XXX",imgui_version)
+if INTERNAL_GENERATION then
+	cimgui_header = cimgui_header..[[//with imgui_internal.h api
+]]
+end
 print("IMGUI_VERSION",imgui_version)
 --get some defines----------------------------
-if HAVE_COMPILER then
-    gdefines = get_defines{"IMGUI_VERSION","FLT_MAX"}
-end                                 
+gdefines = get_defines{"IMGUI_VERSION","FLT_MAX"}
+                                
 
 --funtion for parsing imgui headers
 local function parseImGuiHeader(header,names)
@@ -547,23 +434,18 @@ local function parseImGuiHeader(header,names)
 	end
 	parser.cname_overloads = cimgui_overloads
 	parser.manuals = cimgui_manuals
-	parser.UDTs = {"ImVec2","ImVec4","ImColor"}
+	parser.UDTs = {"ImVec2","ImVec4","ImColor","ImRect"}
 	
-	local pipe,err
-	if HAVE_COMPILER then
-		pipe,err = io.popen(CPRE..header,"r")
-	else
-		pipe,err = io.open(header,"r")
-	end
+	local pipe,err = io.popen(CPRE..header,"r")
 	
 	if not pipe then
-		error("could not execute gcc "..err)
+		error("could not execute COMPILER "..err)
 	end
 	
-	local iterator = (HAVE_COMPILER and cpp2ffi.location) or filelines
+	local iterator = cpp2ffi.location
 	
-	local tableo = {}
 	--[[
+	local tableo = {}
 	local line
 	repeat 
 		line =pipe:read"*l"
@@ -572,7 +454,7 @@ local function parseImGuiHeader(header,names)
 	cpp2ffi.save_data("cdefs1.lua",table.concat(tableo,"\n"))
 	--]]
 	for line,loca,loca2 in iterator(pipe,names,{},COMPILER) do
-		parser:insert(line)
+		parser:insert(line, loca)
 		--table.insert(tableo,line)
 		--print(loca,loca2)
 	end
@@ -582,104 +464,16 @@ local function parseImGuiHeader(header,names)
 end
 --generation
 print("------------------generation with "..COMPILER.."------------------------")
-
---local parser1 = parseImGuiHeader([[headers.h]],{[[imgui]],[[imgui_internal]],[[imstb_textedit]]})
-local parser1 = parseImGuiHeader([[../imgui/imgui.h]],{[[imgui]]})
+local parser1
+if INTERNAL_GENERATION then
+	save_data("headers.h",[[#include "../imgui/imgui.h" 
+	#include "../imgui/imgui_internal.h"]])
+	parser1 = parseImGuiHeader([[headers.h]],{[[imgui]],[[imgui_internal]],[[imstb_textedit]]})
+	os.remove("headers.h")
+else
+	parser1 = parseImGuiHeader([[../imgui/imgui.h]],{[[imgui]]})
+end
 parser1:do_parse()
-
----------- generate cimgui_internal.h
---[=[
-local parser1i = parseImGuiHeader([[../imgui/imgui_internal.h]],{[[imgui_internal]],[[imstb_textedit]]})
-parser1i:do_parse()
-local outpre,outpost = parser1i:gen_structs_and_enums()
---avoid T
-parser1i.templates.ImVector.T = nil
-for k,v in pairs(parser1i.templates.ImVector) do
-	if parser1.templates.ImVector[k] then parser1i.templates.ImVector[k]=nil end
-end
-local outtab = {}
-generate_templates(outtab,parser1i.templates)
---drop first
-table.remove(outtab,1)
-local cstructsstr = outpre..table.concat(outtab,"")..outpost..(extra or "")
-local cfuncsstr = func_header_generate(parser1i)
-save_data("./output/cimgui_internal.h",cimgui_header,"#ifdef CIMGUI_DEFINE_ENUMS_AND_STRUCTS\n",cstructsstr,"\n#endif\n")--,cfuncsstr)
-copyfile("./output/cimgui_internal.h", "../cimgui_internal.h")
---]=]
------------ add only ImGuiContext from imgui_internal.h to parser1
---[=[
-local parser1i = parseImGuiHeader([[../imgui/imgui_internal.h]],{[[imgui_internal]],[[imstb_textedit]]})
-parser1i:do_parse()
-local p1isten = parser1i:gen_structs_and_enums_table()
---parser1i:printItems()
-print"typedefs_table---------------------------"
-cpp2ffi.prtable(parser1i.typedefs_table)
-print"typedefs_table end---------------------------"
-local needed = {ImGuiContext = {type = "ImGuiContext", kind = "structs", order = parser1i.order["ImGuiContext"]}}
-local seen = {}
-local function RecurseNeeded(Ini,IniKind,level)
-	--if level > 5 then return end
-	if seen[Ini] then return end
-	seen[Ini] = true
-	print("RecurseNeeded",Ini,IniKind,level)
-	for i,v in ipairs(p1isten[IniKind][Ini]) do
-		--if not v.type then print("nil type in",Ini,IniKind) end
-		--dont want pointers
-		local type = v.type:match"([^%*]+)"
-		--ImVector out
-		if type:match"ImVector_" then type=type:match"ImVector_(.+)" end
-		
-		local kind = p1isten.enums[type] and "enums" or p1isten.structs[type] and "structs" or nil
-		if kind=="structs" then
-			if not needed[type] then RecurseNeeded(type,kind,level+1) end
-			needed[type] = {type = type, kind = kind, order = parser1i.order[type]}
-		elseif kind=="enums" then
-			needed[type] = {type = type, kind = kind, order = parser1i.order[type]}
-		elseif parser1i.typedefs_table[type] then
-			needed[type] = {type = type, kind = "typedef", order = parser1i.order[type]}
-		elseif parser1i.vardefs[type] then
-			needed[type] = {type = type, kind = "vardef", order = parser1i.order[type]}
-		elseif not cpp2ffi.c_types[type] then
-			print("RecurseNeded failed",type)
-			--error"failed recurse"
-		end
-	end
-end
-
-RecurseNeeded("ImGuiContext","structs",0)
-
-
-local ordered_needed = {}
-for k,v in pairs(needed) do
-	table.insert(ordered_needed,v)
-end
-table.sort(ordered_needed, function(a,b) return a.order < b.order end)
-
-print"needed are-----------------------"
-for i,vv in ipairs(ordered_needed) do
-	print(vv.order,vv.type,vv.kind)
-	local v = parser1i.itemsarr[vv.order]
-
-	--if v.item:match"^[%s\n\r]*struct%s*ImGuiContext" then
-	if vv.kind=="structs" then
-			--add enum keyword where necessary
-			--print"setting enum keyword------------------------"
-			local newitem = ""
-			for line in v.item:gmatch("([^\n]+)") do
-				local typen = line:match"^%s*(%S+)"
-				if p1isten.enums[typen] then
-					print("add enum",typen)
-					newitem = newitem.."\nenum"..line
-				else
-					newitem = newitem.."\n"..line
-				end
-			end
-			v.item = newitem
-	end
-	table.insert(parser1.itemsarr,v)
-end
---]=]
-----------------------
 
 save_data("./output/overloads.txt",parser1.overloadstxt)
 cimgui_generation(parser1)
@@ -696,7 +490,7 @@ if structs_and_enums_table["structs"]["Pair"] then
 structs_and_enums_table["structs"]["Pair"][2]["name"] = ""
 structs_and_enums_table["structs"]["Pair"][2]["type"] = structs_and_enums_table["structs"]["Pair"][2]["type"] .. "}"
 end
--- 1.72 and after
+-- union in 1.72 and after
 if structs_and_enums_table["structs"]["ImGuiStoragePair"] then
 structs_and_enums_table["structs"]["ImGuiStoragePair"][2]["name"] = ""
 structs_and_enums_table["structs"]["ImGuiStoragePair"][2]["type"] = structs_and_enums_table["structs"]["ImGuiStoragePair"][2]["type"] .. "}"
@@ -718,7 +512,7 @@ save_data("./output/typedefs_dict.lua",serializeTableF(parser1.typedefs_dict))
 local parser2
 
 if #implementations > 0 then
-
+	print("------------------implementations generation with "..COMPILER.."------------------------")
     parser2 = cpp2ffi.Parser()
 	
 	local config = require"config_generator"
@@ -726,28 +520,29 @@ if #implementations > 0 then
     for i,impl in ipairs(implementations) do
         local source = [[../imgui/examples/imgui_impl_]].. impl .. ".h "
         local locati = [[imgui_impl_]].. impl
-        local pipe,err
-		local extra_includes = ""
+
+		local define_cmd = COMPILER=="cl" and [[ /E /D]] or [[ -E -D]]
+		local extra_defines = ""
+		if impl == "opengl3" then extra_defines = define_cmd .. "IMGUI_IMPL_OPENGL_LOADER_GL3W " end
 		local include_cmd = COMPILER=="cl" and [[ /I ]] or [[ -I ]]
+		local extra_includes = include_cmd.." ../imgui "
 		if config[impl] then
 			for j,inc in ipairs(config[impl]) do
 				extra_includes = extra_includes .. include_cmd .. inc .. " "
 			end
 		end
-        if HAVE_COMPILER then
-            pipe,err = io.popen(CPRE..extra_includes..source,"r")
-        else
-            pipe,err = io.open(source,"r")
-        end
+
+        local pipe,err = io.popen(CPRE..extra_defines..extra_includes..source,"r")
+
         if not pipe then
             error("could not get file: "..err)
         end
         
-        local iterator = (HAVE_COMPILER and cpp2ffi.location) or filelines
+        local iterator = cpp2ffi.location
         
         for line,locat in iterator(pipe,{locati},{},COMPILER) do
             --local line, comment = split_comment(line)
-			parser2:insert(line)
+			parser2:insert(line,locat)
         end
         pipe:close()
     end

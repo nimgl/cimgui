@@ -33,11 +33,6 @@ typedef unsigned __int64 ImU64;
 //typedef unsigned long long ImU64;
 #endif
 
-//UDT stuff
-typedef struct ImVec2_Simple { float x; float y; } ImVec2_Simple;
-typedef struct ImVec4_Simple { float x; float y; float z; float w;} ImVec4_Simple;
-typedef struct ImColor_Simple { ImVec4_Simple Value;} ImColor_Simple;
-
 
 #ifdef CIMGUI_DEFINE_ENUMS_AND_STRUCTS
 #include "imgui_structs.h"
@@ -45,28 +40,6 @@ typedef struct ImColor_Simple { ImVec4_Simple Value;} ImColor_Simple;
 struct GLFWwindow;
 struct SDL_Window;
 typedef union SDL_Event SDL_Event;
-inline ImVec2_Simple ImVec2ToSimple(ImVec2 vec)
-{
-	ImVec2_Simple result;
-    result.x = vec.x;
-    result.y = vec.y;
-    return result;
-}
-inline ImVec4_Simple ImVec4ToSimple(ImVec4 vec)
-{
-	ImVec4_Simple result;
-    result.x = vec.x;
-    result.y = vec.y;
-	result.z = vec.z;
-    result.w = vec.w;
-    return result;
-}
-inline ImColor_Simple ImColorToSimple(ImColor col)
-{
-	ImColor_Simple result;
-    result.Value = ImVec4ToSimple(col.Value);
-    return result;
-}
 #endif // CIMGUI_DEFINE_ENUMS_AND_STRUCTS
 
 #include "auto_funcs.h"
@@ -82,10 +55,13 @@ CIMGUI_API float igGET_FLT_MAX();
 CIMGUI_API void igColorConvertRGBtoHSV(float r,float g,float b,float *out_h,float *out_s,float *out_v);
 CIMGUI_API void igColorConvertHSVtoRGB(float h,float s,float v,float *out_r,float *out_g,float *out_b);
 
+
 CIMGUI_API ImVector_ImWchar* ImVector_ImWchar_create();
 CIMGUI_API void ImVector_ImWchar_destroy(ImVector_ImWchar* self);
 CIMGUI_API void ImVector_ImWchar_Init(ImVector_ImWchar* p);
 CIMGUI_API void ImVector_ImWchar_UnInit(ImVector_ImWchar* p);
+
+
 #endif //CIMGUI_INCLUDED
 
 

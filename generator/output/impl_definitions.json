@@ -391,11 +391,11 @@
           "type": "const char*"
         }
       ],
-      "argsoriginal": "(const char* glsl_version=NULL)",
+      "argsoriginal": "(const char* glsl_version=((void*)0))",
       "call_args": "(glsl_version)",
       "cimguiname": "ImGui_ImplOpenGL3_Init",
       "defaults": {
-        "glsl_version": "NULL"
+        "glsl_version": "((void*)0)"
       },
       "funcname": "ImGui_ImplOpenGL3_Init",
       "ov_cimguiname": "ImGui_ImplOpenGL3_Init",
@@ -469,6 +469,26 @@
       "defaults": [],
       "funcname": "ImGui_ImplSDL2_InitForD3D",
       "ov_cimguiname": "ImGui_ImplSDL2_InitForD3D",
+      "ret": "bool",
+      "signature": "(SDL_Window*)",
+      "stname": ""
+    }
+  ],
+  "ImGui_ImplSDL2_InitForMetal": [
+    {
+      "args": "(SDL_Window* window)",
+      "argsT": [
+        {
+          "name": "window",
+          "type": "SDL_Window*"
+        }
+      ],
+      "argsoriginal": "(SDL_Window* window)",
+      "call_args": "(window)",
+      "cimguiname": "ImGui_ImplSDL2_InitForMetal",
+      "defaults": [],
+      "funcname": "ImGui_ImplSDL2_InitForMetal",
+      "ov_cimguiname": "ImGui_ImplSDL2_InitForMetal",
       "ret": "bool",
       "signature": "(SDL_Window*)",
       "stname": ""
