@@ -136,7 +136,8 @@ local function clean_spaces(cad)
 end
 
 ------------------------------------
-local function parse_enum_value(value, allenums)
+local function parse_enum_value(enline, allenums)
+	local value = enline.value
 	local function clean(val)
 		if type(val)=="string" then
 			return clean_spaces(val)
@@ -156,13 +157,13 @@ local function parse_enum_value(value, allenums)
 		--must be several and operators
 		--precedence order (hope not ())
 		assert(not value:match("[%(%)]"))
-		local several,seps = strsplit(value,"([<>&|~]+)") 
-		--M.prtable(t.value,several,seps)
+		local several,seps = strsplit(value,"([<>&|~%+]+)") 
+		--M.prtable(value,several,seps)
 		assert(#seps+1==#several)
 		
 		local i = 1
 		local ik = 1
-		local sepk = {"~","<<",">>","&","^","|"}
+		local sepk = {"~","<<",">>","&","^","|","+"}
 		while(#seps>0) do
 			local sep = sepk[ik]
 			local v = seps[i]
@@ -184,6 +185,8 @@ local function parse_enum_value(value, allenums)
 					error"^ operator still not done"
 				elseif v=="|" then
 					several[i] = bit.bor(val1,val2)
+				elseif v=="+" then
+					several[i] = val1 + val2
 				else
 					error("unknown operator "..v)
 				end
@@ -199,9 +202,10 @@ local function parse_enum_value(value, allenums)
 				i = 1
 			end
 		end
-		if #seps>0 then
-			print("value",value)
+		if #seps>0 or type(several[1])~="number" then
+			M.prtable("enline",enline)
 			M.prtable(several,seps)
+			M.prtable(allenums)
 		end
 		assert(#seps==0)
 		assert(type(several[1])=="number")
@@ -276,7 +280,8 @@ local function getRE()
 end
 M.getRE = getRE
 --takes preprocesed file in table cdefsor and returns items
-local function parseItems(txt,dumpit)
+local function parseItems(txt,dumpit,loca)
+	--assert(loca)
 	--dumpit = true
 	local res,resN = getRE()
 	
@@ -293,7 +298,7 @@ local function parseItems(txt,dumpit)
 				item = txt:sub(i,e)
 				--if re~=functionD_re then --skip defined functions
 					item = item:gsub("extern __attribute__%(%(dllexport%)%) ","")
-					table.insert(itemarr,{re_name=re_name,item=item})
+					table.insert(itemarr,{re_name=re_name,item=item,locat=loca})
 				--end
 				items[re_name] = items[re_name] or {}
 				table.insert(items[re_name],item)
@@ -388,8 +393,10 @@ local function name_overloadsAlgo(v)
     return aa,bb
 end
 local function typetoStr(typ)
+	--print("typetoStr",typ)
     --typ = typ:gsub("[^%(%)]+%(%*?(.+)%).+","%1") -- funcs
-    typ = typ:gsub("[^%(%)]+%(%*?(.+)%).+","FnPtr")
+    --typ = typ:gsub("[^%(%)]+%(%*?(.+)%).+","FnPtr")
+    typ = typ:gsub("([^%(%)]+)%(%*?(.+)%).+","Fn%1Ptr")
     typ = typ:gsub("[%w_]+%[(%d*)%]","arr%1")
     typ = typ:gsub("%*","Ptr")
     typ = typ:gsub("void","")
@@ -406,7 +413,8 @@ local function typetoStr(typ)
     typ = typ:gsub("[<>]","")
     return typ
 end
-local function parseFunction(self,stname,lineorig,namespace)
+local function parseFunction(self,stname,lineorig,namespace,locat)
+
 	line = clean_spaces(lineorig)
 	--move *
 	line = line:gsub("%s*%*","%*")
@@ -474,16 +482,18 @@ local function parseFunction(self,stname,lineorig,namespace)
     local functype_arg_rest = "^(%s*[%w%s%*]+%(%*[%w_]+%)%([^%(%)]*%)),*(.*)"
     local rest = argscsinpars:sub(2,-2) --strip ()
     
+	
     while true do
     --local tt = strsplit(rest,",")
     --for ii,arg in ipairs(tt) do
     --for arg in argscsinpars:gmatch("[%(,]*([^,%(%)]+)[%),]") do
+		local reftoptr
 		if rest == "void" then break end
         local type,name,retf,sigf
         local arg,restt = rest:match(functype_arg_rest)
-        if arg then
+        if arg then -- if is function pointer
             local t1,namef,t2 = arg:match(functype_reex)
-            type=t1.."(*)"..t2;name=namef
+            type = t1.."(*)"..t2;name=namef
             retf = t1
             sigf = t2
             rest = restt
@@ -491,8 +501,13 @@ local function parseFunction(self,stname,lineorig,namespace)
             arg,restt = rest:match(",*([^,%(%)]+),*(.*)")
             if not arg then break end
             rest = restt
-            if arg:match("&") and arg:match("const") then
-                arg = arg:gsub("&","")
+            if arg:match("&") then
+				if arg:match("const") then
+					arg = arg:gsub("&","")
+				else
+					arg = arg:gsub("&","*")
+					reftoptr = true
+				end
             end
             if arg:match("%.%.%.") then 
                 type="...";name="..."
@@ -502,7 +517,6 @@ local function parseFunction(self,stname,lineorig,namespace)
 
             if not type or not name then 
                 print("failure arg detection",funcname,type,name,argscsinpars,arg)
-
             else
 				if name:match"%*" then print("**",funcname) end
                 --float name[2] to float[2] name
@@ -513,17 +527,17 @@ local function parseFunction(self,stname,lineorig,namespace)
                 end
             end
         end
-        table.insert(argsArr,{type=type,name=name,ret=retf,signature=sigf})
+        table.insert(argsArr,{type=type,name=name,ret=retf,signature=sigf,reftoptr=reftoptr})
         if arg:match("&") and not arg:match("const") then
             --only post error if not manual
-            local cname = self.getCname(stname,funcname) --cimguiname
+            local cname = self.getCname(stname,funcname, namespace) --cimguiname
             if not self.manuals[cname] then
                 print("reference to no const arg in",funcname,argscsinpars,arg)
             end
         end
     end
     argscsinpars = argscsinpars:gsub("&","")
-    
+
     local signature = argscsinpars:gsub("([%w%s%*_]+)%s[%w_]+%s*([,%)])","%1%2")
     signature = signature:gsub("%s*([,%)])","%1") --space before , and )
     signature = signature:gsub(",%s*",",")--space after ,
@@ -534,6 +548,43 @@ local function parseFunction(self,stname,lineorig,namespace)
     local call_args = argscsinpars:gsub("([%w_]+%s[%w_]+)%[%d*%]","%1") --float[2]
     call_args = call_args:gsub("%(%*([%w_]+)%)%([^%(%)]*%)"," %1") --func type
     call_args = call_args:gsub("[^%(].-([%w_]+)%s*([,%)])","%1%2")
+	
+	--recreate argscsinpars from argsArr
+	local asp, caar
+	if #argsArr > 0 then
+		asp = "("
+		caar = "("
+		for i,v in ipairs(argsArr) do
+			if v.ret then --function pointer
+				asp = asp .. v.ret .. "(*" .. v.name .. ")" .. v.signature .. ","
+				caar = caar .. v.name .. ","
+			else
+				local siz = v.type:match("(%[%d*%])") or ""
+				local type = v.type:gsub("(%[%d*%])","")
+				asp = asp .. type .. (v.name~="..." and " "..v.name or "") .. siz .. ","
+				local callname = v.reftoptr and "*"..v.name or v.name 
+				caar = caar .. callname .. ","
+			end
+		end
+		asp = asp:sub(1,-2)..")"
+		caar = caar:sub(1,-2)..")"
+	else
+		asp = "()"
+		caar = "()"
+	end
+	--[[
+	if asp~=argscsinpars then
+		print("bad recontruction",funcname)
+		print(argscsinpars)
+		print(asp)
+	end
+	if caar~=call_args then
+		print("bad call_args",funcname)
+		print(call_args)
+		print(caar)
+	end
+	--]]
+    ------------------------------
     
     if not ret and stname then --must be constructors
         if not (stname == funcname or "~"..stname==funcname) then --break end
@@ -543,7 +594,7 @@ local function parseFunction(self,stname,lineorig,namespace)
         end
     end
     
-    local cimguiname = self.getCname(stname,funcname)
+    local cimguiname = self.getCname(stname,funcname, namespace)
     table.insert(self.funcdefs,{stname=stname,funcname=funcname,args=args,argsc=argscsinpars,signature=signature,cimguiname=cimguiname,call_args=call_args,ret =ret})
 	local defsT = self.defsT
 	            defsT[cimguiname] = defsT[cimguiname] or {}
@@ -561,9 +612,9 @@ local function parseFunction(self,stname,lineorig,namespace)
     defT.stname = stname
     defT.funcname = funcname
     defT.argsoriginal = args
-    defT.args=argscsinpars
+    defT.args= asp --argscsinpars
     defT.signature = signature
-    defT.call_args = call_args
+    defT.call_args = caar --call_args
     defT.isvararg = signature:match("%.%.%.%)$")
     defT.location = locat
     --defT.comment = "" --comment
@@ -763,16 +814,16 @@ function M.Parser()
 	par.manuals = {}
 	par.UDTs = {}
 
-	function par:insert(line)
-		table.insert(cdefs,line)
+	function par:insert(line,loca)
+		table.insert(cdefs,{line,loca})
 	end
-	function par.getCname(stname,funcname)
+	function par.getCname(stname,funcname, namespace)
 		if #stname == 0 then return funcname end --top level
 		local pre = stname.."_"
 		return pre..funcname
 	end
-	function par.getCname_overload(stname,funcname,signature)
-		local cname = par.getCname(stname,funcname)
+	function par.getCname_overload(stname,funcname,signature, namespace)
+		local cname = par.getCname(stname,funcname, namespace)
 		local ov_cname = par.cname_overloads[cname] and par.cname_overloads[cname][signature] --or cname
 		return ov_cname
 	end
@@ -789,7 +840,8 @@ function M.Parser()
 	end
 	function par:parseItems()
 		--typedefs dictionary
-		for i,line in ipairs(cdefs) do
+		for i,cdef in ipairs(cdefs) do
+			local line = cdef[1]
 			if line:match("typedef") then
 				line = clean_spaces(line)
 				local value,key = line:match("typedef%s+(.+)%s+([%w_]+);")
@@ -809,8 +861,26 @@ function M.Parser()
 				end
 			end
 		end
-		local txt = table.concat(cdefs,"\n")
-		itemsarr,items = parseItems(txt)
+		
+		itemsarr = {}
+		if self.separate_locations then
+			local located_cdefs = self:separate_locations(cdefs)
+			for i,lcdef in ipairs(located_cdefs) do
+				local txt = table.concat(lcdef[2],"\n")
+				local itemsarrT,itemsT = parseItems(txt,false,lcdef[1])
+				for i,it in ipairs(itemsarrT) do
+					table.insert(itemsarr,it)
+				end
+			end
+		else
+			local cdefs2 = {}
+			for i,cdef in ipairs(cdefs) do
+				table.insert(cdefs2,cdef[1])
+			end
+			local txt = table.concat(cdefs2,"\n")
+			itemsarr,items = parseItems(txt,false)
+		end
+		
 		self.itemsarr , self.items = itemsarr,items
 	end
 	function par:printItems()
@@ -822,14 +892,14 @@ function M.Parser()
 	function par:parseFunctions()
 		for i,it in ipairs(itemsarr) do
 			if it.re_name == "function_re" or it.re_name == "functionD_re" then
-				self:parseFunction("",it.item)
+				self:parseFunction("",it.item,nil,it.locat)
 			elseif it.re_name == "namespace_re" then
 				local nsp = it.item:match("%b{}"):sub(2,-2)
 				local namespace = it.item:match("namespace%s+(%S+)")
-				local nspparr,itemsnsp = parseItems(nsp)
+				local nspparr,itemsnsp = parseItems(nsp,false,it.locat)
 				for insp,itnsp in ipairs(nspparr) do
 					if itnsp.re_name == "function_re" or itnsp.re_name == "functionD_re" then
-						self:parseFunction("",itnsp.item,namespace)
+						self:parseFunction("",itnsp.item,namespace,itnsp.locat)
 					end
 				end
 			elseif it.re_name == "struct_re" then
@@ -841,20 +911,20 @@ function M.Parser()
 					self.typenames = self.typenames or {}
 					self.typenames[stname] = typename
 				end
-				local nspparr,itemsnsp = parseItems(nsp)
+				local nspparr,itemsnsp = parseItems(nsp,false,it.locat)
 				for insp,itnsp in ipairs(nspparr) do
 					if itnsp.re_name == "function_re" or itnsp.re_name == "functionD_re" then
-						self:parseFunction(stname,itnsp.item)
+						self:parseFunction(stname,itnsp.item,nil,itnsp.locat)
 					elseif itnsp.re_name == "struct_re" then
 						--get embeded_structs
 						local embededst = itnsp.item:match("struct%s+(%S+)")
 						self.embeded_structs[embededst] = stname.."::"..embededst
 						local nsp2 = strip_end(itnsp.item:match("%b{}"):sub(2,-2))
-						local itemsemarr,itemsem = parseItems(nsp2)
+						local itemsemarr,itemsem = parseItems(nsp2,false,itnsp.locat)
 						assert(not itemsem.struct_re,"two level embed struct")
 						for iemb,itemb in ipairs(itemsemarr) do
 							if itemb.re_name == "function_re" or itemb.re_name == "functionD_re" then
-								self:parseFunction(embededst,itemb.item)
+								self:parseFunction(embededst,itemb.item,nil,itemb.locat)
 							end
 						end
 					end
@@ -864,7 +934,8 @@ function M.Parser()
 		--require"anima"
 		--prtable(self.defsT)
 	end
-	function par:clean_struct(stru)
+	function par:clean_struct(stru, locat)
+		--assert(locat)
 		local outtab = {}
 		local iner = strip_end(stru:match("%b{}"):sub(2,-2))
 		local inistruct = clean_spaces(stru:match("(.-)%b{}"))
@@ -890,7 +961,7 @@ function M.Parser()
 		if derived then
 			table.insert(outtab,"\n    "..derived.." _"..derived..";")
 		end
-		local itlist,itemsin = parseItems(iner)
+		local itlist,itemsin = parseItems(iner, false,locat)
 		if #itlist == 0 then return "" end --here we avoid empty structs
 		for j,it in ipairs(itlist) do
 			if it.re_name == "vardef_re" or it.re_name == "functype_re" or it.re_name == "union_re" then
@@ -945,7 +1016,7 @@ function M.Parser()
 			if it.re_name == "namespace_re" then
 				local nsp = it.item:match("%b{}"):sub(2,-2)
 				local namespace = it.item:match("namespace%s+(%S+)")
-				local nspparr,itemsnsp = parseItems(nsp)
+				local nspparr,itemsnsp = parseItems(nsp, nil, it.locat )
 				for insp,itnsp in ipairs(nspparr) do
 					if itnsp.re_name == "struct_re"  or itnsp.re_name == "typedef_st_re" then
 						--print("in mamespace",itnsp.item,namespace)
@@ -961,7 +1032,7 @@ function M.Parser()
 				--print("enum is:",enumname, enumbody)
 				table.insert(outtab,"\ntypedef enum ".. enumbody..enumname..";")
 			elseif it.re_name == "struct_re" then
-				local cleanst,structname = self:clean_struct(it.item)
+				local cleanst,structname = self:clean_struct(it.item, it.locat)
 				
 				--if not structname then print("NO NAME",cleanst,it.item) end
 				
@@ -975,7 +1046,7 @@ function M.Parser()
 		end
 		--inner_structs
 		for i,it in ipairs(self.inerstructs) do
-			local cleanst,structname = self:clean_struct(it.item)
+			local cleanst,structname = self:clean_struct(it.item, it.locat)
 			if structname then
 			table.insert(outtab,cleanst)
 			table.insert(typedefs_table,"typedef struct "..structname.." "..structname..";\n")
@@ -1065,10 +1136,12 @@ function M.Parser()
 			end
 		end
 		--then structs and enums
+		local enumsordered = {}
 		for i,it in ipairs(itemsarr) do
 			if it.re_name == "enum_re" then
 				local enumname = it.item:match"^%s*enum%s+([^%s;{}]+)"
 				outtab.enums[enumname] = {}
+				table.insert(enumsordered,enumname)
 				self.order[enumname] = i
 				local inner = strip_end(it.item:match("%b{}"):sub(2,-2))
 				local enumarr = str_split(inner,",")
@@ -1079,12 +1152,22 @@ function M.Parser()
 					else --increment by one
 						local name = line:match("%s*([^,]+)")
 						local enum_table = outtab.enums[enumname]
-						local value = enum_table[#enum_table] and (enum_table[#enum_table].value + 1) or 0
+						local prevvalue = enum_table[#enum_table] and enum_table[#enum_table].value
+						local value --= enum_table[#enum_table] and (enum_table[#enum_table].value + 1) or 0
+						if not prevvalue then
+							value = 0
+						elseif tonumber(prevvalue) then
+							value = prevvalue +1
+						else --should be string
+							value = prevvalue .. "+1"
+						end
+						if name then --avoid last , if present
 						table.insert(outtab.enums[enumname],{name=name,value=value})
+						end
 					end
 				end
 			elseif it.re_name == "struct_re" then
-				local cleanst,structname,strtab = self:clean_struct(it.item)
+				local cleanst,structname,strtab = self:clean_struct(it.item, it.locat)
 				--if not void stname or templated
 				--M.prtable(cleanst,structname,strtab)
 				if structname and not self.typenames[structname] then
@@ -1099,7 +1182,7 @@ function M.Parser()
 		--inner_structs
 
 		for i,it in ipairs(self.inerstructs) do
-			local cleanst,structname,strtab = self:clean_struct(it.item)
+			local cleanst,structname,strtab = self:clean_struct(it.item, it.locat)
 			if structname then --not empty struc
 				outtab.structs[structname] = {}
 				for j=3,#strtab-1 do
@@ -1119,9 +1202,11 @@ function M.Parser()
 		--calcule size of name[16+1] [xxx_COUNT]
 		local allenums = {}
 		--first calc_value in enums
-		for enumname,enum in pairs(outtab.enums) do
+		for i,enumname in ipairs(enumsordered) do
+		--for enumname,enum in pairs(outtab.enums) do
+			local enum = outtab.enums[enumname]
 			for i,t in ipairs(enum) do
-				t.calc_value = parse_enum_value(t.value,allenums)
+				t.calc_value = parse_enum_value(t,allenums)
 				assert(t.calc_value)
 				allenums[t.name] = t.calc_value
 			end
@@ -1175,13 +1260,13 @@ function M.Parser()
                 local typesc,post = name_overloadsAlgo(v)
                 for i,t in ipairs(v) do
                     --take overloaded name from manual table or algorythm
-                    t.ov_cimguiname = self.getCname_overload(t.stname,t.funcname,t.signature) or k..typetoStr(post[i])
+                    t.ov_cimguiname = self.getCname_overload(t.stname,t.funcname,t.signature,t.namespace) or k..typetoStr(post[i])
                     table.insert(strt,string.format("%d\t%s\t%s %s",i,t.ret,t.ov_cimguiname,t.signature))
                     --M.prtable(typesc[i],post)
                 end
                 --check not two names are equal (produced by bad cimguiname_overload)
                 for i=1,#v-1 do 
-                    for j=i+1,#v-1 do
+                    for j=i+1,#v do
                         if v[i].ov_cimguiname == v[j].ov_cimguiname then
                           local t,tj = v[i],v[j]
                           print("Error caused by Bad overloading "..t.ov_cimguiname.." of function ",t.funcname,t.signature,"conflicts with ",tj.funcname,tj.signature)

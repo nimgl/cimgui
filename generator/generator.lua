@@ -50,8 +50,8 @@ for i=3,#script_args do table.insert(implementations,script_args[i]) end
 local cimgui_manuals = {
     igLogText = true,
     ImGuiTextBuffer_appendf = true,
-    igColorConvertRGBtoHSV = true,
-    igColorConvertHSVtoRGB = true
+    --igColorConvertRGBtoHSV = true,
+    --igColorConvertHSVtoRGB = true
 }
 --------------------------------------------------------------------------
 --this table is a dictionary to force a naming of function overloading (instead of algorythmic generated)
@@ -428,8 +428,22 @@ gdefines = get_defines{"IMGUI_VERSION","FLT_MAX"}
 local function parseImGuiHeader(header,names)
 	--prepare parser
 	local parser = cpp2ffi.Parser()
-	parser.getCname = function(stname,funcname)
-		local pre = (stname == "") and "ig" or stname.."_"
+	
+	parser.separate_locations = function(self,cdefs)
+		local imguicdefs = {}
+		local othercdefs = {}
+		for i,cdef in ipairs(cdefs) do
+			if cdef[2]=="imgui" then
+				table.insert(imguicdefs,cdef[1])
+			else
+				table.insert(othercdefs,cdef[1])
+			end
+		end
+		return {{"imgui",imguicdefs},{"internal",othercdefs}}
+	end
+	
+	parser.getCname = function(stname,funcname,namespace)
+		local pre = (stname == "") and (namespace and (namespace=="ImGui" and "ig" or namespace.."_") or "ig") or stname.."_"
 		return pre..funcname
 	end
 	parser.cname_overloads = cimgui_overloads
@@ -538,6 +552,20 @@ if #implementations > 0 then
         end
         pipe:close()
     end
+	
+	parser2.separate_locations = function(self, cdefs)
+		local sepcdefs = {}
+		for i,impl in ipairs(implementations) do
+			sepcdefs[i] = {[[imgui_impl_]].. impl,{}}
+			for j,cdef in ipairs(cdefs) do
+				if cdef[2]==sepcdefs[i][1] then
+					table.insert(sepcdefs[i][2],cdef[1])
+				end
+			end
+		end
+		return sepcdefs
+	end
+	
     parser2:do_parse()
 
     -- save ./cimgui_impl.h

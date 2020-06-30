@@ -11,7 +11,7 @@ History:
 Initially cimgui was developed by Stephan Dilly as hand-written code but lately turned into an auto-generated version by sonoro1234 in order to keep up with imgui more easily (letting the user select the desired branch and commit)
 
 Notes:
-* currently this wrapper is based on version [1.76 of Dear ImGui with internal api]
+* currently this wrapper is based on version [1.77 of Dear ImGui with internal api]
 * only functions, structs and enums from imgui.h (an optionally imgui_internal.h) are wrapped.
 * if you are interested in imgui implementations you should look [LuaJIT-ImGui](https://github.com/sonoro1234/LuaJIT-ImGui) project.
 * All naming is algorithmic except for those names that were coded in cimgui_overloads table (https://github.com/cimgui/cimgui/blob/master/generator/generator.lua#L60). In the official version this table is empty.
@@ -50,7 +50,7 @@ Notes:
   * cimguiname : the name without overloading (this should be used if there is not ov_cimguiname)
   * ret : the return type
   * retref : is set if original return type is a reference. (will be a pointer in cimgui)
-  * argsT : an array of collections (each one with type: argument type and name: the argument name)
+  * argsT : an array of collections (each one with type: argument type and name: the argument name, when the argument is a function pointer also ret: return type and signature: the function signature)
   * args : a string of argsT concatenated and separated by commas
   * call_args : a string with the argument names separated by commas for calling imgui function
   * defaults : a collection in which key is argument name and value is the default value.
@@ -61,6 +61,7 @@ Notes:
   * templated : is set if the function belongs to a templated class (ImVector)
   * templatedgen: is set if the function belongs to a struct generated from template (ImVector_ImWchar)
   * nonUDT : if present the original function was returning a user defined type so that signature has been changed to accept a pointer to the UDT as first argument.
+  * location : name of the header file this function comes from. (imgui, internal, imgui_impl_xxx)
 ### structs_and_enums description
 * Is is a collection with two items:
   * under key enums we get the enums collection in which each key is the enum tagname and the value is an array of the ordered values represented as a collection with keys
@@ -71,7 +72,8 @@ Notes:
     * type : the type of the struct member
     * template_type : if type has a template argument (as ImVector) here will be
     * name : the name of the struct member
-	* bitfield : the bitfield width (in case it is a bitfield)
+    * size : the number of array elements (when it is an array)
+    * bitfield : the bitfield width (in case it is a bitfield)
 # usage
 
 * use whatever method is in ImGui c++ namespace in the original [imgui.h](https://github.com/ocornut/imgui/blob/master/imgui.h) by prepending `ig`
