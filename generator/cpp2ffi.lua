@@ -182,6 +182,9 @@ local function parse_enum_value(value, allenums,dontpost)
 				local val2 = clean(several[i+1])
 				if allenums[val1] then val1 = allenums[val1] end
 				if allenums[val2] then val2 = allenums[val2] end
+				--for getting numbers from "1ULL"
+				if type(val1)=="string" then val1 = loadstring("return "..val1)() end
+				if type(val2)=="string" then val2 = loadstring("return "..val2)() end
 				if v=="~" then
 					assert(several[i]==" " or several[i]=="")
 					several[i] = bit.bnot(val2)
@@ -214,12 +217,14 @@ local function parse_enum_value(value, allenums,dontpost)
 		end
 		if #seps>0 or type(several[1])~="number" and not dontpost then
 			--M.prtable("enline",enline)
-			print("parse_enum_value WARNING",value)
+			print("parse_enum_value WARNING",value,several[1])
 			--M.prtable(several,seps)
 			--M.prtable("allenums",allenums)
 		end
 		assert(#seps==0)
-		assert(type(several[1])=="number")
+		assert(type(several[1])=="number" or type(several[1])=="cdata")
+		--converst 1ULL to "1ULL"
+		if type(several[1])=="cdata" then several[1] = tostring(several[1]) end
 		return several[1]
 	end
 end
@@ -273,7 +278,7 @@ local function getRE()
 	structenum_re = "^([^;{}]-%b{}[%s%w_%(%)]*;)",
 	namespace_re = "^([^;{}]-namespace[^;{}]-%b{})",
 	class_re = "^([^;{}]-class[^;{}]-%b{}%s*;)",
-	typedef_re = "^\n*(typedef[^;]+;)",
+	typedef_re = "^\n*%s*(typedef[^;]+;)",
 	typedef_st_re = "^\n*(typedef%s+struct%s*%b{}.-;)",
 	functypedef_re = "^\n*%s*(typedef[%w%s%*_]+%(%s*%*%s*[%w_]+%s*%)%s*%b()%s*;)",
 	functypedef_re = "^\n*%s*(typedef[%w%s%*_]+%([^*]*%*%s*[%w_]+%s*%)%s*%b()%s*;)",
@@ -365,7 +370,12 @@ local function parseItems(txt,linenumdict, itparent, dumpit)
 							loca = table.remove(loca,1)
 						end
 						if not loca then
-							print(itemold)
+							print(string.format("%q , %q ",itemold,itemfirstline),#itemfirstline)
+							for k,v in pairs(linenumdict) do
+								if k:match(itemfirstline) then
+									print(string.format("%q",k),#k)
+								end
+							end
 							error"no entry in linenumdict"
 						end
 					else
@@ -935,7 +945,9 @@ function M.Parser()
 	par.UDTs = {}
 
 	function par:insert(line,loca)
-		table.insert(cdefs,{line,loca})
+		--table.insert(cdefs,{line,loca})
+		--table.insert(cdefs,{line:gsub("^%s*(.-)%s*$", "%1"),loca})
+		table.insert(cdefs,{line:gsub("^(%s*.-)%s*$", "%1"),loca})
 	end
 	function par.getCname(stname,funcname, namespace)
 		if #stname == 0 then return funcname end --top level
@@ -967,6 +979,7 @@ function M.Parser()
 	end
 	function par:do_parse()
 		self:parseItems()
+		self:gen_structs_and_enums_table()
 		self:gen_structs_and_enums()
 		self:compute_overloads()
 		--self:compute_templated()
@@ -1017,12 +1030,16 @@ function M.Parser()
 					child.parent = it
 				end
 				if it.re_name == "struct_re" then
-					local typename = it.item:match("%s*template%s*<%s*typename%s*(%S+)%s*>")
+					local typename = it.item:match("^%s*template%s*<%s*typename%s*(%S+)%s*>")
 					local stname = it.item:match("struct%s+(%S+)")
 					it.name = stname
-					if typename then -- it is a struct template
+					
+					local templa1,templa2 = it.item:match("^%s*template%s*<%s*(%S+)%s*(%S+)%s*>")
+					if templa1 or templa2 then print("template found",stname,templa1,templa2,"typename",typename) end
+					
+					if typename or templa2 then -- it is a struct template
 						self.typenames = self.typenames or {}
-						self.typenames[stname] = typename
+						self.typenames[stname] = typename or templa2
 					end
 				elseif it.re_name == "namespace_re" then
 					it.name = it.item:match("namespace%s+(%S+)")
@@ -1144,7 +1161,7 @@ function M.Parser()
 			elseif it.re_name == "enum_re" then
 				--nop
 			elseif it.re_name ~= "functionD_re" and it.re_name ~= "function_re" then
-				print(it.re_name,"not processed clean_struct",it.item:sub(1,12))
+				print(it.re_name,"not processed clean_struct in",stname,it.item:sub(1,24))
 				--M.prtable(it)
 			end
 		end
@@ -1158,6 +1175,15 @@ function M.Parser()
 			parnam = it.parent.name.."::"..parnam
 			it = it.parent
 		end
+		return parnam
+	end
+	local function get_parents_nameC(it)
+		local parnam = ""
+		while it.parent do
+			parnam = it.parent.name.."::"..parnam
+			it = it.parent
+		end
+		if parnam~="" then parnam = parnam:sub(1,-3) end
 		return parnam
 	end
 	function par:gen_structs_and_enums()
@@ -1182,10 +1208,28 @@ function M.Parser()
 					end
 				end
 			elseif it.re_name == "enum_re" then
-				local enumname, enumbody = it.item:match"^%s*enum%s+([^%s;{}]+)[%s\n\r]*(%b{})"
+				--local enumname, enumbody = it.item:match"^%s*enum%s+([^%s;{}]+)[%s\n\r]*(%b{})"
+				local enumname = it.item:match"^%s*enum%s+([^%s;{}]+)"
 				if enumname then
-					enumbody = clean_comments(enumbody)
-					table.insert(outtab,"\ntypedef enum ".. enumbody..enumname..";")
+					--if it's an enum with int type changed
+					if self.structs_and_enums_table.enumtypes[enumname] then
+						local enumtype = self.structs_and_enums_table.enumtypes[enumname]
+						local enumbody = ""
+						local extraenums = ""
+						for i,v in ipairs(self.structs_and_enums_table.enums[enumname]) do
+							if type(v.calc_value)=="string" then
+								extraenums = extraenums .."\nstatic const "..enumtype.." "..v.name.." = "..v.calc_value..";"
+							else
+								enumbody = enumbody .. "\n" ..v.name .."="..v.value..","
+							end
+						end
+						enumbody = "{"..enumbody.."\n}"
+						table.insert(outtab,"\ntypedef enum ".. enumbody..enumname..";"..extraenums)
+					else
+						local enumbody = it.item:match"(%b{})"
+						enumbody = clean_comments(enumbody)
+						table.insert(outtab,"\ntypedef enum ".. enumbody..enumname..";")
+					end
 					if it.parent then
 						if it.parent.re_name == "namespace_re" then
 							local namespace = it.parent.item:match("namespace%s+(%S+)")
@@ -1195,6 +1239,7 @@ function M.Parser()
 				else --unamed enum just repeat declaration
 					local cl_item = clean_comments(it.item)
 					table.insert(outtab,cl_item)
+					print("unnamed enum",cl_item)
 				end
 			elseif it.re_name == "struct_re" or it.re_name == "typedef_st_re" then
 				local cleanst,structname,strtab,comstab,predec = self:clean_structR1(it)
@@ -1224,12 +1269,12 @@ function M.Parser()
 					if it.parent.re_name == "struct_re" or it.parent.re_name == "typedef_st_re" then
 						stname = it.parent.name
 					elseif it.parent.re_name == "namespace_re" then
-						namespace = it.parent.name
+						namespace = get_parents_nameC(it) --it.parent.name
 					end
 				end
 				if it.item:match"^%s*template%s+<" then
 					local ttype,fun = it.item:match"^%s*template%s+<%s*typename%s+([^>]+)%s*>%s*(.+)$"
-					if self.ftemplate_list then
+					if self.ftemplate_list and self.ftemplate_list[ttype] then
 						for iT,vT in ipairs(self.ftemplate_list[ttype]) do
 							local funT = fun:gsub(ttype,vT)
 							self:parseFunction(stname,{item=funT},namespace,it.locat)
@@ -1306,6 +1351,11 @@ function M.Parser()
 			enumname = "unnamed"..unnamed_enum_counter
 			print("unamed enum",enumname,it.parent and ("parent:"..it.parent.name) or "no parent")
 		end
+		local enumtype = it.item:match"^%s*enum%s+[^%s;{}:]+%s*:%s*([^{%s]+)"
+		if enumtype then 
+			print("enumtype",enumtype) 
+			outtab.enumtypes[enumname] = enumtype
+		end
 		outtab.enums[enumname] = {}
 		table.insert(enumsordered,enumname)
 		local inner = strip_end(it.item:match("%b{}"):sub(2,-2))
@@ -1353,7 +1403,7 @@ function M.Parser()
 	end
 	par.enums_for_table = enums_for_table
 	function par:gen_structs_and_enums_table()
-		local outtab = {enums={},structs={},locations={}}
+		local outtab = {enums={},structs={},locations={},enumtypes={}}
 		self.typedefs_table = {}
 		local enumsordered = {}
 		unnamed_enum_counter = 0
@@ -1377,6 +1427,8 @@ function M.Parser()
 					for j=3,#strtab-1 do
 						self:parse_struct_line(strtab[j],outtab.structs[structname],comstab[j])
 					end
+				else
+					print("skipped unnamed or templated struct",structname)
 				end
 			elseif it.re_name == "namespace_re" or it.re_name == "union_re" or it.re_name == "functype_re" then
 				--nop
@@ -1414,10 +1466,15 @@ function M.Parser()
 						f()
 						t.size = estevalor
 					end
-					assert(t.size,val)
+					--assert(t.size,val)
+					if not t.size then
+						print("not t.size for",val,"in",t.name)
+						error"not t.size"
+					end
 				end
 			end
 		end
+		self.structs_and_enums_table = outtab
 		return outtab
 	end
 	par.alltypes = {}

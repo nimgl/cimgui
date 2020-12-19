@@ -4,6 +4,20 @@ if(WIN32) #to mingw work as all the others
 set(CMAKE_SHARED_LIBRARY_PREFIX "")
 endif(WIN32)
 #general settings
+
+
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../imgui/backends)
+	set(BAKENDS_FOLDER "../imgui/backends/")
+else()
+	set(BAKENDS_FOLDER "../imgui/examples/")
+endif()
+
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../imgui/imgui_tables.cpp)
+	set(TABLES_SOURCE "../imgui/imgui_tables.cpp")
+else()
+	set(TABLES_SOURCE "")
+endif()
+
 include_directories(../imgui)
 add_definitions("-DIMGUI_DISABLE_OBSOLETE_FUNCTIONS=1")
 
@@ -12,7 +26,8 @@ set(IMGUI_SOURCES ../cimgui.cpp
 ../imgui/imgui.cpp 
 ../imgui/imgui_draw.cpp 
 ../imgui/imgui_demo.cpp 
-../imgui/imgui_widgets.cpp 
+../imgui/imgui_widgets.cpp
+${TABLES_SOURCE} 
 )
 
 set(IMGUI_SOURCES_sdl)
@@ -37,7 +52,7 @@ if(IMGUI_FREETYPE)
 endif(IMGUI_FREETYPE)
 
 #opengl3
-list(APPEND IMGUI_SOURCES ../imgui/examples/imgui_impl_opengl3.cpp ../imgui/examples/libs/gl3w/GL/gl3w.c)
+list(APPEND IMGUI_SOURCES ${BAKENDS_FOLDER}imgui_impl_opengl3.cpp ../imgui/examples/libs/gl3w/GL/gl3w.c)
 list(APPEND IMGUI_SOURCES ./cimgui_extras.cpp)
 include_directories(../imgui/examples/libs/gl3w)
 if(WIN32)
@@ -48,13 +63,13 @@ endif(WIN32)
 
 
 #sdl2
-list(APPEND IMGUI_SOURCES ../imgui/examples/imgui_impl_sdl.cpp)
+list(APPEND IMGUI_SOURCES ${BAKENDS_FOLDER}imgui_impl_sdl.cpp)
 if(DEFINED SDL_PATH)
 	message(STATUS "SDL_PATH defined as " ${SDL_PATH})
 	FIND_PACKAGE(SDL2 REQUIRED PATHS ${SDL_PATH})
 	get_target_property(SDL_INCLUDE SDL2::SDL2 INTERFACE_INCLUDE_DIRECTORIES)
 	message(STATUS "sdlinclude is " ${SDL_INCLUDE})
-	if ("${SDL_INCLUDE}" STREQUAL "") #if not found latest SDL2 cmake config use older
+	if ("${SDL_INCLUDE}" STREQUAL "" OR "${SDL_INCLUDE}" STREQUAL "SDL_INCLUDE-NOTFOUND") #if not found latest SDL2 cmake config use older
 		message(STATUS "sdlinclude2 is " ${SDL2_INCLUDE_DIRS})
 		include_directories(${SDL2_INCLUDE_DIRS})
 		set(IMGUI_SDL_LIBRARY ${SDL2_LIBRARIES})
@@ -76,5 +91,8 @@ target_link_libraries(cimgui_sdl ${IMGUI_LIBRARIES} ${IMGUI_SDL_LIBRARY})
 #using library
 include_directories(../generator/output/)
 add_executable(test_sdl main.c)
+if (MINGW)
+target_link_options(test_sdl PRIVATE "-mconsole")
+endif()
 target_link_libraries(test_sdl ${IMGUI_SDL_LIBRARY} cimgui_sdl)
 

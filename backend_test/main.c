@@ -5,20 +5,24 @@
 #include <stdio.h>
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
+#ifdef _MSC_VER
+#include <windows.h>
+#endif
 #include <GL/gl.h>
 #include <GL/glu.h>
 
-//#define USE_DOCKING
+
 
 SDL_Window *window = NULL;
 
 int main(int argc, char* argv[])
 {
+
   if (SDL_Init(SDL_INIT_VIDEO) < 0) {
     SDL_Log("failed to init: %s", SDL_GetError());
     return -1;
   }
-
+ 
   // Decide GL+GLSL versions
 #if __APPLE__
     // GL 3.2 Core + GLSL 150
@@ -65,7 +69,7 @@ int main(int argc, char* argv[])
   }
 
   // check opengl version sdl uses
-  //SDL_Log("opengl version: %s", (char*)glGetString(GL_VERSION));
+  SDL_Log("opengl version: %s", (char*)glGetString(GL_VERSION));
 
   // setup imgui
   igCreateContext(NULL);
@@ -74,7 +78,7 @@ int main(int argc, char* argv[])
   ImGuiIO* ioptr = igGetIO();
   ioptr->ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;       // Enable Keyboard Controls
   //ioptr->ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
-#ifdef USE_DOCKING
+#ifdef IMGUI_HAS_DOCK
   ioptr->ConfigFlags |= ImGuiConfigFlags_DockingEnable;           // Enable Docking
   ioptr->ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;         // Enable Multi-Viewport / Platform Windows
 #endif
@@ -128,7 +132,7 @@ int main(int argc, char* argv[])
       igCheckbox("Demo window", &showDemoWindow);
       igCheckbox("Another window", &showAnotherWindow);
 
-      igSliderFloat("Float", &f, 0.0f, 1.0f, "%.3f", 1.0f);
+      igSliderFloat("Float", &f, 0.0f, 1.0f, "%.3f", 0);
       igColorEdit3("clear color", (float*)&clearColor, 0);
 
       ImVec2 buttonSize;
@@ -163,7 +167,7 @@ int main(int argc, char* argv[])
     glClearColor(clearColor.x, clearColor.y, clearColor.z, clearColor.w);
     glClear(GL_COLOR_BUFFER_BIT);
     ImGui_ImplOpenGL3_RenderDrawData(igGetDrawData());
-#ifdef USE_DOCKING
+#ifdef IMGUI_HAS_DOCK
 	if (ioptr->ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
         {
             SDL_Window* backup_current_window = SDL_GL_GetCurrentWindow();
