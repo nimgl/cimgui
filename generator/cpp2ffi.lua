@@ -287,7 +287,7 @@ local function getRE()
 	typedef_re = "^\n*%s*(typedef[^;]+;)",
 	typedef_st_re = "^\n*(typedef%s+struct%s*%b{}.-;)",
 	functypedef_re = "^\n*%s*(typedef[%w%s%*_]+%(%s*%*%s*[%w_]+%s*%)%s*%b()%s*;)",
-	functypedef_re = "^\n*%s*(typedef[%w%s%*_]+%([^*]*%*%s*[%w_]+%s*%)%s*%b()%s*;)",
+	functypedef_re = "^\n*%s*(typedef[%w%s%*_]+%([^*]*%*?%s*[%w_]+%s*%)%s*%b()%s*;)",
 	--vardef_re = "^\n*([^;{}%(%)]+;)",
 	--change for things as
 	--[[ImU8 Used4kPagesMap[((sizeof(ImWchar16) == 2 ? 0xFFFF : 0x10FFFF)+1)/4096/8];]]
@@ -503,7 +503,7 @@ local function typetoStr(typ)
     typ = typ:gsub("float","Float")
     typ = typ:gsub("uInt","Uint")
     typ = typ:gsub("ImGui","")
-    typ = typ:gsub("ImStr","STR")
+    --typ = typ:gsub("ImStr","STR")
     typ = typ:gsub("Im","")
     typ = typ:gsub("[<>]","")
     return typ
@@ -792,7 +792,7 @@ local function ADDIMSTR_S(FP)
         --if isIMSTR return generate _S version
 		local isIMSTR = false
 		for i,arg in ipairs(defT.argsT) do
-			if arg.type == "ImStr" then isIMSTR=true;break end
+			if arg.type == "ImStrv" then isIMSTR=true;break end
 		end
         --if defT.ret=="ImVec2" or defT.ret=="ImVec4" or defT.ret=="ImColor" then
 		--if isIMSTR then print(t.cimguiname,defT.ov_cimguiname,defT.argsoriginal,"isIMSTR") end
@@ -806,7 +806,7 @@ local function ADDIMSTR_S(FP)
             --then argsT table
             defT2.argsT = {}
             for k,v in ipairs(defT.argsT) do
-				local typ = v.type == "ImStr" and "const char*" or v.type
+				local typ = v.type == "ImStrv" and "const char*" or v.type
                 table.insert(defT2.argsT,{type=typ,name=v.name})
             end
 			--defaults table
@@ -814,13 +814,13 @@ local function ADDIMSTR_S(FP)
 			for k,v in pairs(defT.defaults) do
 				defT2.defaults[k] = v
             end
-            defT2.args = defT2.args:gsub("ImStr","const char*")
-			--recreate call_args for wrapping into ImStr
+            defT2.args = defT2.args:gsub("ImStrv","const char*")
+			--recreate call_args for wrapping into ImStrv
 			local caar
 			if #defT.argsT > 0 then
 				caar = "("
 				for i,v in ipairs(defT.argsT) do
-					local name = v.name --v.type == "ImStr" and "ImStr("..v.name..")" or v.name --wrap
+					local name = v.name 
 					if v.ret then --function pointer
 						caar = caar .. name .. ","
 					else
@@ -832,9 +832,9 @@ local function ADDIMSTR_S(FP)
 			else
 				caar = "()"
 			end
-			defT2.call_args = caar --:gsub("ImStr%(([^%(%)]+)%)","%1") --unwrap
+			defT2.call_args = caar 
 			------------------
-            defT2.signature = defT.signature:gsub("ImStr","const char*") --.."_S"
+            defT2.signature = defT.signature:gsub("ImStrv","const char*") --.."_S"
             defT2.ov_cimguiname = defT2.ov_cimguiname .. "_Strv"
             defT2.isIMSTR_S = 1
 			-- check there is not an equal version in imgui_stname
@@ -1084,16 +1084,25 @@ function M.Parser()
 				local value,key = line:match("typedef%s+(.+)%s+([%w_]+);")
 				if key and value then
 					self.typedefs_dict[key] = value
-				else --try function typedef
+				else --try function pointer typedef
 					local key = line:match("%(%*([%w_]+)%)%([^%(%)]*%)")
 					if key then
 						local linet = line
 						linet = linet:gsub("typedef ","")
 						linet = linet:gsub("%(%*("..key..")%)","(*)")
 						self.typedefs_dict[key] = linet
-					elseif not line:match"typedef%s*struct" then --discard typedef struct
-						print("typedef not found")
-						print(key,value,line)
+					else
+						--try function typedef
+						key = line:match("%(([%w_]+)%)%([^%(%)]*%)")
+						if key then
+							local linet = line
+							linet = linet:gsub("typedef ","")
+							linet = linet:gsub("%(("..key..")%)","()")
+							self.typedefs_dict[key] = linet
+						elseif not line:match"typedef%s*struct" then --discard typedef struct
+							print("typedef not found")
+							print(key,value,line)
+						end
 					end
 				end
 			end
